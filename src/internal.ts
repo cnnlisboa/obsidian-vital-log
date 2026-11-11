@@ -26,9 +26,14 @@ interface PluginRegistry {
   plugins?: Record<string, unknown>;
 }
 
+interface InternalPluginRegistry {
+  getPluginById?: (id: string) => { enabled?: boolean; instance?: { options?: { template?: unknown } } } | null;
+}
+
 interface InternalApp {
   commands?: CommandRegistry;
   plugins?: PluginRegistry;
+  internalPlugins?: InternalPluginRegistry;
 }
 
 function asInternal(app: App): InternalApp {
@@ -69,4 +74,15 @@ export function getRegisteredCommands(app: App): Command[] {
 /** The Templater plugin instance, or null if it isn't installed/enabled. */
 export function getTemplaterPlugin(app: App): TemplaterPlugin | null {
   return (asInternal(app).plugins?.plugins?.['templater-obsidian'] as TemplaterPlugin) ?? null;
+}
+
+/**
+ * The template path set in Obsidian's core Daily notes plugin, or '' when the
+ * plugin is off or has no template.
+ */
+export function getCoreDailyNotesTemplate(app: App): string {
+  const plugin = asInternal(app).internalPlugins?.getPluginById?.('daily-notes');
+  if (!plugin?.enabled) return '';
+  const template = plugin.instance?.options?.template;
+  return typeof template === 'string' ? template.trim() : '';
 }

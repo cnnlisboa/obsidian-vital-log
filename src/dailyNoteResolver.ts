@@ -7,6 +7,7 @@
 import { logicalDay } from './dayBoundary';
 import { App, Notice, TFile } from 'obsidian';
 import type { VitalLogSettings } from './types';
+import { getCoreDailyNotesTemplate, getTemplaterPlugin } from './internal';
 
 // moment is bundled with Obsidian — accessed via the global
 declare const moment: (date?: Date | string) => {
@@ -64,18 +65,96 @@ export async function resolveDailyNote(
   settings: VitalLogSettings,
   date: Date = logicalDay()
 ): Promise<TFile | null> {
-  return resolveNote(app, settings.dailyNotePath, date);
+  return resolveNote(app, settings.dailyNotePath, date, dailyNoteTemplatePath(app, settings));
+}
+
+/**
+ * The template a new daily note starts from: Vital Log's own setting, or,
+ * when that is empty, the template set in Obsidian's core Daily notes plugin.
+ * Empty string means "no template".
+ */
+export function dailyNoteTemplatePath(app: App, settings: VitalLogSettings): string {
+  const own = (settings.dailyNoteTemplatePath ?? '').trim();
+  return own || getCoreDailyNotesTemplate(app);
+}
+
+/** Find a template file by path, with or without the ".md" extension. */
+export function findTemplateFile(app: App, templatePath: string): TFile | null {
+  const path = templatePath.trim().replace(/^\/+/, '');
+  if (!path) return null;
+  for (const candidate of path.endsWith('.md') ? [path] : [path + '.md', path]) {
+    const file = app.vault.getAbstractFileByPath(candidate);
+    if (file instanceof TFile) return file;
+  }
+  return null;
+}
+
+/**
+ * Fill in the core Templates syntax for the note's own date (not today), so a
+ * note created for a past day while back-filling gets that day's values:
+ *   {{date}} {{date:FORMAT}} {{time}} {{time:FORMAT}} {{title}}
+ * Templater's `<% … %>` syntax is left for Templater to run afterwards.
+ */
+export function renderCoreTemplate(content: string, date: Date, title: string): string {
+  const m = moment(date);
+  return content.replace(
+    /\{\{\s*(date|time|title)\s*(?::([^}]*))?\}\}/gi,
+    (_match, token: string, format: string | undefined) => {
+      const kind = token.toLowerCase();
+      if (kind === 'title') return title;
+      const fmt = format?.trim() || (kind === 'date' ? 'YYYY-MM-DD' : 'HH:mm');
+      return m.format(fmt);
+    }
+  );
+}
+
+/** Content for a new note: the rendered template, or empty frontmatter. */
+async function initialNoteContent(
+  app: App,
+  templatePath: string | undefined,
+  date: Date,
+  notePath: string
+): Promise<string> {
+  const empty = '---\n---\n';
+  if (!templatePath?.trim()) return empty;
+
+  const template = findTemplateFile(app, templatePath);
+  if (!template) {
+    new Notice(`Vital Log: Daily note template "${templatePath}" not found. Created the note without it.`);
+    return empty;
+  }
+  try {
+    const title = notePath.substring(notePath.lastIndexOf('/') + 1).replace(/\.md$/, '');
+    return renderCoreTemplate(await app.vault.read(template), date, title);
+  } catch (err) {
+    console.error('Vital Log: could not read daily note template', err);
+    return empty;
+  }
+}
+
+/** Run Templater on a just-created note when its content uses Templater syntax. */
+async function runTemplaterIfNeeded(app: App, file: TFile, content: string): Promise<void> {
+  if (!content.includes('<%')) return;
+  const run = getTemplaterPlugin(app)?.templater?.overwrite_file_commands;
+  if (!run) return;
+  try {
+    await run(file);
+  } catch (err) {
+    console.error('Vital Log: Templater failed on new daily note', err);
+  }
 }
 
 /**
  * Generic note resolver — takes any path template + date.
- * Returns existing file or creates a new one with empty frontmatter.
- * Returns { file, created } so callers can trigger Templater on new files.
+ * Returns the existing file, or creates it. A new note starts from
+ * `templatePath` when one is given (core {{date}}-style tokens filled for
+ * `date`, then Templater if the template uses it), else empty frontmatter.
  */
 export async function resolveNote(
   app: App,
   pathTemplate: string,
-  date: Date = logicalDay()
+  date: Date = logicalDay(),
+  templatePath?: string
 ): Promise<TFile | null> {
   const resolvedPath = resolvePathTemplate(pathTemplate, date) + '.md';
 
@@ -95,9 +174,10 @@ export async function resolveNote(
     await ensureFolderExists(app, folderPath);
   }
 
-  // Create with empty frontmatter
+  const content = await initialNoteContent(app, templatePath, date, resolvedPath);
   try {
-    const file = await app.vault.create(resolvedPath, '---\n---\n');
+    const file = await app.vault.create(resolvedPath, content);
+    await runTemplaterIfNeeded(app, file, content);
     return file;
   } catch (err) {
     new Notice(`Vital Log: Failed to create note at "${resolvedPath}".`);

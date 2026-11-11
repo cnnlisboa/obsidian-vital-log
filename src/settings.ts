@@ -211,6 +211,19 @@ export class VitalLogSettingTab extends PluginSettingTab {
     el.appendChild(pathError);
     showPathTokenError(this.plugin.settings.dailyNotePath);
 
+    new Setting(el)
+      .setName('New note template')
+      .setDesc('Template used when Vital Log has to create a daily note that does not exist yet. Leave empty to use the template from Obsidian\'s core Daily notes plugin. {{date}}, {{date:FORMAT}}, {{time}} and {{title}} are filled in for the note\'s day; Templater syntax runs if Templater is installed.')
+      .addText((text) =>
+        text
+          .setPlaceholder('Templates/Daily.md')
+          .setValue(this.plugin.settings.dailyNoteTemplatePath)
+          .onChange(async (value) => {
+            this.plugin.settings.dailyNoteTemplatePath = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
     // When a day ends: Management Tracker's setting wins when it shares one.
     const shared = sharedDayEnd();
     const dayEnd = new Setting(el).setName('A day ends at');
