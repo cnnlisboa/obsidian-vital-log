@@ -10,6 +10,12 @@ export interface Vitamin {
   unit: string;          // free-form: "mg", "IU", "mcg", etc.
   /** Hours after a dose in which a symptom counts as "after this substance"; falls back to the global window. */
   symptomWindowHours?: number;
+  /** Units left (capsules, scoops…). Absent = not tracked. See stock.ts. */
+  stock?: number;
+  /** Units one default dose uses (default 1). */
+  stockPerDose?: number;
+  /** Warn at or below this many units (default: 7 doses). */
+  lowStockAt?: number;
   archived?: boolean;
 }
 
@@ -22,6 +28,12 @@ export interface Pack {
   id: string;
   displayName: string;   // e.g. "Multivitamin"
   items: PackItem[];
+  /** Units left of the pack as one product. When set, logging the pack uses this instead of each vitamin's stock. */
+  stock?: number;
+  /** Units one pack log uses (default 1). */
+  stockPerDose?: number;
+  /** Warn at or below this many units (default: 7 doses). */
+  lowStockAt?: number;
   archived?: boolean;
 }
 

@@ -164,6 +164,18 @@ stacks:
     name: "Morning Stack"
 ```
 
+### Stock
+
+Track how much of a supplement is left. Open a vitamin or pack in the manager and fill **Stock (optional)**:
+
+| Field | Meaning |
+|---|---|
+| Units left | Capsules, scoops, drops… Leave empty to not track stock. |
+| Units per dose | Units one default dose (or one pack log) uses. Default 1. For a dose of 3 capsules, enter 3. |
+| Warn at or below | Show a restock notice at this count. Default: 7 doses. |
+
+Every log subtracts from the count. A vitamin logged at twice its default amount uses twice the units. A **pack with its own stock** is treated as one product (one capsule holding several substances), so only the pack's count goes down. A pack without stock uses each vitamin's stock instead. Stacks add up the packs and vitamins inside them. Counts stop at zero, and deleting a log entry doesn't add the units back; edit the count by hand when you restock.
+
 ### Log Source Tracking
 
 Enable **Log Source** in settings to record where each entry came from:

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Stock counts** for vitamins and packs (Manage → Edit → Stock): units left, units per dose, and a warn-at level. Each log takes its units off the count, from anywhere it's logged (log modal, dashboard, reminders, API). A pack with its own stock counts as one product; a pack without uses each vitamin's stock, scaled by the pack's amount. A notice warns when something drops to the warn level (7 doses by default), and the manager shows what's left.
+
 - The public API is now version 5: `forms()` lists custom modals as forms, `formStatus(form, path)` says which fields a note has filled, and `renderForm(el, { form, path }, component)` draws a form for one note. Management Tracker uses them to show your forms in its period tabs and count the empty ones.
 
 - **A day ends at** (Settings → General, default midnight): until that time, logs, forms and the day view still count as the day before, so a late night is not a new day. Entries keep their real time; the day chart and timeline place late-night entries after midnight. With Management Tracker 2+ installed, Vital Log follows its setting.

@@ -18,6 +18,7 @@ import type {
 } from './types';
 import * as yaml from './yamlManager';
 import { applyTemplate, noteContentHeading } from './template';
+import { packUse, reportStockUse, stackUse, vitaminUse } from './stock';
 
 const DEFAULT_SUPPLEMENT_TEMPLATE = '- {time} {name} {amount}{unit}';
 
@@ -42,6 +43,7 @@ export async function logVitamin(
 ): Promise<void> {
   const staged = stageVitamin(vitamin, opts, settings);
   await yaml.appendEntry(app, file, staged.propertyKey, staged.entry);
+  await reportStockUse(vitaminUse(vitamin, opts.amount));
 
   if (opts.appendToNote) {
     const template = settings.noteContentTemplate_supplements || DEFAULT_SUPPLEMENT_TEMPLATE;
@@ -77,6 +79,7 @@ export async function logPack(
   await yaml.mutateFrontmatter(app, file, (_fm, appendTo) => {
     for (const { propertyKey, entry } of staged) appendTo(propertyKey, entry);
   });
+  await reportStockUse(packUse(pack, settings));
 
   if (skipped.length > 0) {
     new Notice(
@@ -129,6 +132,7 @@ export async function logStack(
   await yaml.mutateFrontmatter(app, file, (_fm, appendTo) => {
     for (const { propertyKey, entry } of staged) appendTo(propertyKey, entry);
   });
+  await reportStockUse(stackUse(stack, settings));
 
   if (skipped.length > 0) {
     new Notice(

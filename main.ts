@@ -33,6 +33,7 @@ import { registerDayViewer, renderDayView } from './src/dayViewer';
 import { removeCommand } from './src/internal';
 import { createVitalLogApi } from './src/api';
 import { initDayBoundary } from './src/dayBoundary';
+import { applyStockUse, lowStockMessage, setStockHandler } from './src/stock';
 import type { VitalLogApi } from './src/api';
 
 export default class VitalLogPlugin extends Plugin {
@@ -105,6 +106,15 @@ export default class VitalLogPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
     initDayBoundary(this.app, () => this.settings.dayEndsAt);
+
+    // ── Stock counts go down as supplements are logged ─────
+    setStockHandler(async (uses) => {
+      const changes = applyStockUse(this.settings, uses);
+      if (changes.length === 0) return;
+      await this.saveSettings();
+      const warning = lowStockMessage(changes);
+      if (warning) new Notice(warning, 8000);
+    });
 
     // ── Settings tab ───────────────────────────────────────
     this.addSettingTab(new VitalLogSettingTab(this.app, this));
@@ -245,6 +255,7 @@ export default class VitalLogPlugin extends Plugin {
 
   onunload(): void {
     // Obsidian automatically closes all registered modals and event listeners.
+    setStockHandler(null);
   }
 
   /** Reveal the dashboard pane, reusing an existing leaf or opening one on the right. */

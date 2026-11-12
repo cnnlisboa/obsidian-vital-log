@@ -17,6 +17,7 @@ import { SCHEDULING_HINTS } from './types';
 import { confirm } from './confirmModal';
 import { validatePropertyKey, allKeyOwners } from './validation';
 import { makeReorderable } from './dragReorder';
+import { lowStockThreshold, stockLabel } from './stock';
 import {
   GuardedModal,
   attachFieldError,
@@ -47,6 +48,79 @@ function moveWithin<T>(full: T[], view: T[], from: number, to: number): void {
   if (fromIdx === -1 || toIdx === -1) return;
   const [moved] = full.splice(fromIdx, 1);
   full.splice(toIdx, 0, moved);
+}
+
+type StockFields = Pick<Vitamin, 'stock' | 'stockPerDose' | 'lowStockAt'>;
+
+/**
+ * Optional stock inputs (units left, units per dose, warn-at). `read()`
+ * returns the parsed values, or null after showing an error.
+ */
+function stockInputs(
+  form: HTMLElement,
+  current: StockFields | null,
+  doseHint: string
+): { read: () => StockFields | null } {
+  const details = form.createEl('details', { cls: 'vital-log-stock-section' });
+  details.createEl('summary', { text: 'Stock (optional)' });
+  if (current && typeof current.stock === 'number') details.open = true;
+
+  const field = (label: string, value: number | undefined, placeholder: string, hint?: string) => {
+    const row = details.createDiv('vital-log-form-row');
+    row.createEl('label', { text: label });
+    const input = row.createEl('input', {
+      type: 'number',
+      value: value !== undefined ? String(value) : '',
+      attr: { min: '0', step: 'any' },
+    });
+    input.placeholder = placeholder;
+    if (hint) row.createEl('span', { cls: 'vital-log-form-hint', text: hint });
+    return { input, error: attachFieldError(row, input) };
+  };
+
+  const stock = field('Units left', current?.stock, 'e.g. 60', 'Capsules, scoops… Leave empty to not track stock.');
+  const per = field('Units per dose', current?.stockPerDose, '1', doseHint);
+  const low = field('Warn at or below', current?.lowStockAt, '7 doses');
+
+  const num = (f: { input: HTMLInputElement; error: { show(m: string): void; clear(): void } }, min: number) => {
+    const raw = f.input.value.trim();
+    if (!raw) { f.error.clear(); return { ok: true, value: undefined as number | undefined }; }
+    const n = parseFloat(raw);
+    if (isNaN(n) || n < min || (min > 0 && n === 0)) {
+      f.error.show(min > 0 ? 'Enter a number greater than zero.' : 'Enter zero or more.');
+      details.open = true;
+      f.input.focus();
+      return { ok: false, value: undefined };
+    }
+    f.error.clear();
+    return { ok: true, value: n };
+  };
+
+  return {
+    read: () => {
+      const s = num(stock, 0); if (!s.ok) return null;
+      const p = num(per, 1e-9); if (!p.ok) return null;
+      const l = num(low, 0); if (!l.ok) return null;
+      return { stock: s.value, stockPerDose: p.value, lowStockAt: l.value };
+    },
+  };
+}
+
+/** Append "  |  42 left" to a row's meta line, highlighted when low. */
+function renderStockBadge(meta: HTMLElement, item: StockFields): void {
+  const label = stockLabel(item);
+  if (!label) return;
+  meta.appendText('  |  ');
+  const low = (item.stock as number) <= lowStockThreshold(item);
+  meta.createSpan({ cls: 'vital-log-stock' + (low ? ' is-low' : ''), text: label });
+}
+
+/** Copy stock values onto `target`, removing the ones left empty. */
+function assignStock(target: StockFields, values: StockFields): void {
+  for (const key of ['stock', 'stockPerDose', 'lowStockAt'] as const) {
+    if (values[key] !== undefined) target[key] = values[key];
+    else delete target[key];
+  }
 }
 
 /** A grip icon marking the row as draggable. */
@@ -180,10 +254,11 @@ export class ManageModal extends GuardedModal {
 
     const info = row.createDiv('vital-log-item-info');
     info.createDiv({ cls: 'vital-log-item-name', text: vit.displayName });
-    info.createDiv({
+    const meta = info.createDiv({
       cls: 'vital-log-item-meta',
       text: `key: ${vit.propertyKey}  |  default: ${vit.defaultAmount} ${vit.unit}`,
     });
+    renderStockBadge(meta, vit);
 
     const actions = row.createDiv('vital-log-item-actions');
 
@@ -319,6 +394,8 @@ export class ManageModal extends GuardedModal {
     });
     const windowError = attachFieldError(windowRow, windowInput);
 
+    const stockForm = stockInputs(form, vit, 'Units one default dose uses, e.g. 3 when a dose is 3 capsules.');
+
     const actionsEl = form.createDiv('vital-log-inline-form-actions');
     const cancelBtn = actionsEl.createEl('button', { text: 'Cancel', cls: 'vital-log-btn' });
     const saveBtn = actionsEl.createEl('button', { text: 'Save', cls: 'vital-log-btn mod-cta' });
@@ -349,6 +426,9 @@ export class ManageModal extends GuardedModal {
       }
       windowError.clear();
 
+      const stock = stockForm.read();
+      if (!stock) return;
+
       if (isEdit) {
         const existing = this.settings.vitamins.find((v) => v.id === vit!.id);
         if (existing) {
@@ -358,16 +438,19 @@ export class ManageModal extends GuardedModal {
           existing.unit = unitInput.value.trim();
           if (windowHours !== undefined) existing.symptomWindowHours = windowHours;
           else delete existing.symptomWindowHours;
+          assignStock(existing, stock);
         }
       } else {
-        this.settings.vitamins.push({
+        const created: Vitamin = {
           id: nanoid(),
           displayName: nameInput.value.trim(),
           propertyKey: keyInput.value.trim(),
           defaultAmount: amount,
           unit: unitInput.value.trim(),
           ...(windowHours !== undefined ? { symptomWindowHours: windowHours } : {}),
-        });
+        };
+        assignStock(created, stock);
+        this.settings.vitamins.push(created);
       }
 
       await this.saveSettings();
@@ -429,7 +512,8 @@ export class ManageModal extends GuardedModal {
 
     const info = row.createDiv('vital-log-item-info');
     info.createDiv({ cls: 'vital-log-item-name', text: pack.displayName });
-    info.createDiv({ cls: 'vital-log-item-meta', text: `${pack.items.length} vitamin(s)` });
+    const meta = info.createDiv({ cls: 'vital-log-item-meta', text: `${pack.items.length} vitamin(s)` });
+    renderStockBadge(meta, pack);
 
     const actions = row.createDiv('vital-log-item-actions');
 
@@ -584,6 +668,12 @@ export class ManageModal extends GuardedModal {
       itemsError.clear();
     });
 
+    const stockForm = stockInputs(
+      form,
+      pack,
+      'Units one pack log uses. Set stock here when the pack is one product (e.g. a combined capsule); otherwise each vitamin\'s own stock is used.'
+    );
+
     const actionsEl = form.createDiv('vital-log-inline-form-actions');
     const cancelBtn = actionsEl.createEl('button', { text: 'Cancel', cls: 'vital-log-btn' });
     const saveBtn = actionsEl.createEl('button', { text: 'Save', cls: 'vital-log-btn mod-cta' });
@@ -600,18 +690,24 @@ export class ManageModal extends GuardedModal {
       }
       itemsError.clear();
 
+      const stock = stockForm.read();
+      if (!stock) return;
+
       if (isEdit) {
         const existing = this.settings.packs.find((p) => p.id === pack!.id);
         if (existing) {
           existing.displayName = nameInput.value.trim();
           existing.items = validItems as PackItem[];
+          assignStock(existing, stock);
         }
       } else {
-        this.settings.packs.push({
+        const created: Pack = {
           id: nanoid(),
           displayName: nameInput.value.trim(),
           items: validItems as PackItem[],
-        });
+        };
+        assignStock(created, stock);
+        this.settings.packs.push(created);
       }
 
       await this.saveSettings();
