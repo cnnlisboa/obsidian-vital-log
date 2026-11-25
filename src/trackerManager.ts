@@ -22,6 +22,14 @@ const DEFAULT_TRACKER_TEMPLATE = '- {time} {name}: {value}';
  *       mood: 3
  *       note: "feeling okay"
  */
+/** A tracker reading just written, for linked plugins (Management Tracker). */
+export type TrackerLogHandler = (tracker: TrackerConfig, file: TFile, reading: { time: string; value: number }) => void | Promise<void>;
+let logHandler: TrackerLogHandler | null = null;
+
+export function setTrackerLogHandler(h: TrackerLogHandler | null): void {
+  logHandler = h;
+}
+
 export async function logTracker(
   app: App,
   file: TFile,
@@ -37,6 +45,13 @@ export async function logTracker(
     entry['note'] = opts.note;
   }
   await yaml.appendEntry(app, file, tracker.propertyKey, entry);
+  if (logHandler) {
+    try {
+      await logHandler(tracker, file, { time: opts.time, value: opts.value });
+    } catch (err) {
+      console.error('Vital Log tracker link:', err);
+    }
+  }
 
   if (opts.appendToNote) {
     const template = settings?.noteContentTemplate_trackers || DEFAULT_TRACKER_TEMPLATE;

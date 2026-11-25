@@ -402,6 +402,79 @@ export function timeline(log: DayLog): TimelineItem[] {
   return items.sort(byTime);
 }
 
+/** One timeline row: entries of the same family logged at the same minute. */
+export interface TimelineGroup {
+  kind: TimelineKind;
+  time: string | null;
+  icon?: string;
+  /** Headline: a pack or stack's name when one is in the group, else every entry. */
+  text: string;
+  /** The rest: what the pack or stack held, or a single entry's note. */
+  note?: string;
+  severity?: number;
+  items: TimelineItem[];
+}
+
+/** Kinds that share a row when logged at the same time. */
+const FAMILY: Record<TimelineKind, string> = {
+  marker: 'marker',
+  session: 'session',
+  substance: 'supplements',
+  pack: 'supplements',
+  stack: 'supplements',
+  tracker: 'trackers',
+  tally: 'trackers',
+  habit: 'trackers',
+  symptom: 'symptoms',
+  event: 'events',
+};
+
+/**
+ * Fold a time-ordered timeline into rows: substances, packs and stacks
+ * taken at the same minute become one row (a pack's contents under its
+ * name), and so do trackers, symptoms or events read together. Untimed
+ * entries keep a row each.
+ */
+export function groupTimeline(items: TimelineItem[]): TimelineGroup[] {
+  const buckets = new Map<string, TimelineItem[]>();
+  const order: TimelineItem[][] = [];
+  for (const item of items) {
+    if (item.time === null) {
+      order.push([item]);
+      continue;
+    }
+    const key = `${item.time}|${FAMILY[item.kind]}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item);
+    else {
+      const fresh = [item];
+      buckets.set(key, fresh);
+      order.push(fresh);
+    }
+  }
+  return order.map(toGroup);
+}
+
+function toGroup(items: TimelineItem[]): TimelineGroup {
+  const first = items[0];
+  if (items.length === 1) {
+    return { kind: first.kind, time: first.time, icon: first.icon, text: first.text, note: first.note, severity: first.severity, items };
+  }
+  const heads = items.filter((i) => i.kind === 'stack' || i.kind === 'pack');
+  const rest = items.filter((i) => !heads.includes(i));
+  const lead = heads.find((i) => i.kind === 'stack') ?? heads[0] ?? first;
+  const severities = items.map((i) => i.severity).filter((v): v is number => v !== undefined);
+  return {
+    kind: lead.kind,
+    time: first.time,
+    icon: lead.icon,
+    text: (heads.length ? heads : rest).map((i) => i.text).join(' · '),
+    ...(heads.length && rest.length ? { note: rest.map((i) => i.text).join(' · ') } : {}),
+    ...(severities.length ? { severity: Math.max(...severities) } : {}),
+    items,
+  };
+}
+
 export function isEmptyDay(log: DayLog): boolean {
   return (
     log.markers.length === 0 && log.doses.length === 0 && log.packs.length === 0 && log.stacks.length === 0 &&

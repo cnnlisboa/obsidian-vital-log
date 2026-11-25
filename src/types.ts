@@ -266,7 +266,20 @@ export interface Metric {
   step: number;          // increment/decrement amount per click (tally); 1 for series
   showInStatusBar?: boolean; // show current/target in the status bar
   appendToNoteName?: string; // vault path (no .md) of note to append tally lines to
+  /**
+   * Minutes trackers: each reading is also logged in Management Tracker as
+   * a timed session counting toward this start choice (an effort, habit,
+   * goal, area…), ending at the reading's time.
+   */
+  mtLink?: MtLink;
   archived?: boolean;
+}
+
+export interface MtLink {
+  /** Management Tracker start-choice id (`startChoices()[].id`). */
+  choice: string;
+  /** Its label when linked, for showing the link when Management Tracker is off. */
+  label: string;
 }
 
 // Legacy aliases — both former config types are now structural views of Metric.
@@ -386,11 +399,29 @@ export interface ScheduleItem {
   frequency: Frequency;
   /** `HH:mm` reminder times on the days it's due; none means no reminders. */
   times?: string[];
+  /**
+   * Vitamins, packs and stacks: logged by themselves on the days they're
+   * due (at the first reminder time, else when Obsidian first runs that
+   * day) unless skipped.
+   */
+  autoLog?: boolean;
+}
+
+/** What auto-logging last did for a schedule item. */
+export interface AutoLogRecord {
+  /** The last day handled, `YYYY-MM-DD`. */
+  date: string;
+  /** `HH:mm` of the entries it wrote that day; absent when it wrote none. */
+  time?: string;
+  /** Skipped that day: nothing written, or what was written taken back. */
+  skipped?: boolean;
 }
 
 export interface PlannedLogs {
   trackerGoals: TrackerGoalPlan[];
   schedule: ScheduleItem[];
+  /** Schedule item id → what auto-logging last did for it. */
+  autoLogged?: Record<string, AutoLogRecord>;
 }
 
 // ── Custom Modal types ──────────────────────────────────────

@@ -18,12 +18,12 @@ import type {
 } from './types';
 import * as yaml from './yamlManager';
 import { applyTemplate, noteContentHeading } from './template';
-import { packUse, reportStockUse, stackUse, vitaminUse } from './stock';
+import { packUse, reportStockUse, returnStockUse, stackUse, vitaminUse } from './stock';
 
 const DEFAULT_SUPPLEMENT_TEMPLATE = '- {time} {name} {amount}{unit}';
 
 /** One frontmatter list entry, staged in memory before anything is written. */
-interface StagedEntry {
+export interface StagedEntry {
   propertyKey: string;
   entry: unknown;
 }
@@ -167,6 +167,78 @@ export async function logStack(
     });
     await yaml.appendLineToBody(app, file, line, noteContentHeading(settings));
   }
+}
+
+export type LoggedSupplement =
+  | { kind: 'vitamin'; vitamin: Vitamin; amount: number; source?: string }
+  | { kind: 'pack'; pack: Pack; source?: string }
+  | { kind: 'stack'; stack: Stack };
+
+/** Every frontmatter entry logging `what` at `time` writes. Pure. */
+export function stageSupplement(what: LoggedSupplement, time: string, settings: VitalLogSettings): StagedEntry[] {
+  const skipped: string[] = [];
+  switch (what.kind) {
+    case 'vitamin':
+      return [stageVitamin(what.vitamin, { time, amount: what.amount, source: what.source }, settings)];
+    case 'pack':
+      return stagePack(what.pack, settings, { time, source: what.source }, skipped);
+    case 'stack': {
+      const staged: StagedEntry[] = [];
+      if (settings.logStackEntries !== false) staged.push({ propertyKey: 'stacks', entry: { time, name: what.stack.displayName } });
+      for (const item of what.stack.items) staged.push(...stageStackItem(item, what.stack, settings, { time }, skipped));
+      return staged;
+    }
+  }
+}
+
+/**
+ * Take back a log of `what` at `time`: remove one matching entry for each
+ * entry such a log writes, in one write, and put the stock back. Returns
+ * how many entries were found and removed.
+ */
+export async function unlogSupplement(
+  app: App,
+  file: TFile,
+  what: LoggedSupplement,
+  time: string,
+  settings: VitalLogSettings
+): Promise<number> {
+  const staged = stageSupplement(what, time, settings);
+  let removed = 0;
+  await yaml.mutateFrontmatter(app, file, (fm) => {
+    removed = removeStaged(fm, staged);
+  });
+  if (removed > 0) {
+    await returnStockUse(
+      what.kind === 'vitamin' ? vitaminUse(what.vitamin, what.amount)
+        : what.kind === 'pack' ? packUse(what.pack, settings)
+          : stackUse(what.stack, settings)
+    );
+  }
+  return removed;
+}
+
+/** Remove from `fm` one entry equal to each staged entry. Returns how many went. */
+export function removeStaged(fm: Record<string, unknown>, staged: StagedEntry[]): number {
+  let removed = 0;
+  for (const { propertyKey, entry } of staged) {
+    const list = fm[propertyKey];
+    if (!Array.isArray(list)) continue;
+    const at = list.findIndex((e) => sameEntry(e, entry));
+    if (at < 0) continue;
+    list.splice(at, 1);
+    removed++;
+  }
+  return removed;
+}
+
+/** Same keys and values, in any order; times compared as written. */
+function sameEntry(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
+  const ka = Object.keys(a as object).sort();
+  const kb = Object.keys(b as object).sort();
+  if (ka.join('\u0000') !== kb.join('\u0000')) return false;
+  return ka.every((k) => String((a as Record<string, unknown>)[k]) === String((b as Record<string, unknown>)[k]));
 }
 
 // ── Helpers ──────────────────────────────────────────────────

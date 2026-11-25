@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The `vital-day` **Timeline** puts things logged at the same minute on one row: a pack or stack shows its name with what it held beneath it, substances taken together are listed together, and trackers read together share a row. Hover a row to see each entry.
+
+- **Minutes trackers can be linked to Management Tracker** (Settings → Metrics → Edit → Management Tracker): pick an effort, habit, goal, pillar or area, and each reading is also logged as a Time Tracker session counting toward it, ending at the reading's time (10 minutes at 08:30 is 08:20–08:30). Deleting or editing the reading in History takes the session back or moves it. Needs Management Tracker with API 8.
+
+- **Planned supplements can log themselves** (Settings → Plan → Daily Schedule, the switch on a vitamin, pack or stack): on each day it's due it's logged at its first reminder time, or when Obsidian first runs that day without one, unless it was already logged. The dashboard shows when it logs and a **Skip** button, which before the time stops it and after takes the entries back and returns the stock; **Undo** logs it again. Days Obsidian was closed are filled in, up to a week back, for items with a reminder time.
+
 - **Stock counts** for vitamins and packs (Manage → Edit → Stock): units left, units per dose, and a warn-at level. Each log takes its units off the count, from anywhere it's logged (log modal, dashboard, reminders, API). A pack with its own stock counts as one product; a pack without uses each vitamin's stock, scaled by the pack's amount. A notice warns when something drops to the warn level (7 doses by default), and the manager shows what's left.
 
 - The public API is now version 5: `forms()` lists custom modals as forms, `formStatus(form, path)` says which fields a note has filled, and `renderForm(el, { form, path }, component)` draws a form for one note. Management Tracker uses them to show your forms in its period tabs and count the empty ones.

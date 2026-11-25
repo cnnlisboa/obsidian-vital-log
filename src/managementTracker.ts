@@ -40,6 +40,65 @@ export interface ManagementApi {
   dayEndsAt?(): string;
   /** Today as Management Tracker counts days, `YYYY-MM-DD` (since version 2). */
   today?(): string;
+  /** Since version 3. */
+  timerReady?(): boolean;
+  /** What a session can count toward (since version 3). */
+  startChoices?(): MtStartChoice[];
+  /** Log a finished session (since version 7). */
+  logSession?(opts: { choice?: string; title?: string; start: number; end: number; eventId?: string; sessionId?: string }): Promise<MtResult>;
+  /** Take back a session logged with logSession (since version 8). */
+  removeSession?(opts: { sessionId: string; eventId?: string }): Promise<MtResult>;
+}
+
+export interface MtStartChoice {
+  id: string;
+  /** Effort, Goal, Habit, Pillar, a recent setup… */
+  kind: string;
+  label: string;
+  detail: string;
+  area: string;
+  toward: string;
+}
+
+export interface MtResult {
+  ok: boolean;
+  error?: string;
+  duplicate?: boolean;
+}
+
+/** Version that can both log and take back sessions. */
+export const MT_SESSIONS_VERSION = 8;
+
+/** The API when it can log and remove sessions, else null. */
+export function getSessionApi(app: App): ManagementApi | null {
+  const api = getManagementApi(app);
+  if (!api || api.version < MT_SESSIONS_VERSION) return null;
+  if (typeof api.logSession !== 'function' || typeof api.removeSession !== 'function' || typeof api.startChoices !== 'function') return null;
+  return api;
+}
+
+/**
+ * The session a minutes reading stands for: it ends at the reading's time
+ * on the note's day (or the morning after, for a time before the day end)
+ * and lasts its minutes. Epoch milliseconds; null for no minutes or a bad time.
+ */
+export function sessionWindow(noteDate: string, time: string, minutes: number, dayEndMinutes: number): { start: number; end: number } | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(noteDate);
+  const t = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!d || !t || !(minutes > 0)) return null;
+  const clock = Number(t[1]) * 60 + Number(t[2]);
+  const nextDay = dayEndMinutes > 0 && clock < dayEndMinutes ? 1 : 0;
+  const end = new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]) + nextDay, Number(t[1]), Number(t[2])).getTime();
+  return { start: end - Math.round(minutes * 60_000), end };
+}
+
+/**
+ * A reading's session id: the same reading always gets the same id, so a
+ * retry is logged once and deleting the reading can find the session.
+ */
+export function sessionIdFor(trackerId: string, noteDate: string, time: string, minutes: number): string {
+  const tracker = trackerId.replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'tracker';
+  return `vl-${tracker}-${noteDate}-${time.replace(/[^0-9]/g, '')}-${String(minutes).replace(/[^0-9]/g, '-')}`;
 }
 
 /** The API when Management Tracker is enabled and new enough, else null. */

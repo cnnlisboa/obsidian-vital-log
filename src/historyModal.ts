@@ -5,7 +5,7 @@
 // ============================================================
 
 import { logicalDay } from './dayBoundary';
-import { App, Modal, Notice } from 'obsidian';
+import { App, Modal, Notice, type TFile } from 'obsidian';
 import type {
   VitalLogSettings,
   VitaminEntry,
@@ -20,6 +20,7 @@ import { isVitaminEntry, isSubstanceEntry, isPackEntry, isStackEntry, isTrackerE
 import { seriesMetrics, scalarMetrics, checkboxMetrics } from './types';
 import { getDailyNoteIfExists } from './dailyNoteResolver';
 import * as yaml from './yamlManager';
+import { linkedTrackerFor, pullReading, pushReading, readingOf } from './mtLink';
 
 // moment is bundled with Obsidian
 declare const moment: (date?: Date | string) => { format: (fmt: string) => string };
@@ -695,13 +696,32 @@ export class HistoryModal extends Modal {
   private async deleteEntry(propertyKey: string, idx: number): Promise<void> {
     const file = getDailyNoteIfExists(this.app, this.settings, this.selectedDate);
     if (!file) return;
+    const before = await this.linkedReading(file, propertyKey, idx);
     await yaml.removeEntry(this.app, file, propertyKey, idx);
+    if (before) await pullReading(this.app, this.settings, before.tracker, file, before.reading);
   }
 
   private async editEntry(propertyKey: string, idx: number, updated: VitaminEntry | SubstanceEntry | PackEntry | StackEntry | Record<string, unknown>): Promise<void> {
     const file = getDailyNoteIfExists(this.app, this.settings, this.selectedDate);
     if (!file) return;
+    const before = await this.linkedReading(file, propertyKey, idx);
     await yaml.editEntry(this.app, file, propertyKey, idx, updated);
+    if (before) {
+      // Management Tracker's session follows the reading's new time and minutes.
+      const after = readingOf(before.tracker, updated);
+      if (after && after.time === before.reading.time && after.value === before.reading.value) return;
+      await pullReading(this.app, this.settings, before.tracker, file, before.reading);
+      if (after) await pushReading(this.app, this.settings, before.tracker, file, after);
+    }
+  }
+
+  /** The entry at `idx` when it's a reading of a tracker linked to Management Tracker. */
+  private async linkedReading(file: TFile, propertyKey: string, idx: number) {
+    const tracker = linkedTrackerFor(this.settings, propertyKey);
+    if (!tracker) return null;
+    const entries = await yaml.readEntries(this.app, file, propertyKey);
+    const reading = readingOf(tracker, entries[idx]);
+    return reading ? { tracker, reading } : null;
   }
 
   private async setTallyEntry(propertyKey: string, entry: TallyEntry): Promise<void> {

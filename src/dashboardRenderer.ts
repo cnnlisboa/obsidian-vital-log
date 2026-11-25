@@ -9,6 +9,7 @@
 
 import { setIcon } from 'obsidian';
 import type VitalLogPlugin from '../main';
+import { autoLogState, runAutoLog, skipAutoLogToday, unskipAutoLogToday } from './autoLog';
 import type { TrackerConfig, TallyCounterConfig, ScheduleItem, StatType } from './types';
 import { STAT_LABELS, defaultDisplayStats, isEventEntry } from './types';
 import { seriesMetrics, scalarMetrics, checkboxMetrics } from './types';
@@ -404,10 +405,54 @@ function buildScheduleSection(
       if (t) buildCheckboxScheduleControls(plugin, row, t, fm, isToday, repaint);
     } else if (item.kind === 'metric') {
       // A rating or amount needs its value: logged from the log window.
-    } else if (isToday && !done) {
-      buildSupplementInlineLog(plugin, section, row, item, repaint);
+    } else {
+      if (item.autoLog && isToday) buildAutoLogControls(plugin, row, item, dateISO, repaint);
+      if (isToday && !done) buildSupplementInlineLog(plugin, section, row, item, repaint);
     }
   }
+}
+
+/**
+ * An auto-logged vitamin, pack or stack: when it logs (or logged), and a
+ * Skip button that takes today's log back — or Undo, after a skip.
+ */
+function buildAutoLogControls(
+  plugin: VitalLogPlugin,
+  row: HTMLElement,
+  item: ScheduleItem,
+  dateISO: string,
+  repaint: () => Promise<void>
+): void {
+  const st = autoLogState(plugin.settings, item, dateISO);
+  if (st.state === 'handled') {
+    row.createSpan({ cls: 'vital-log-schedule-meta', text: 'logged' });
+    return;
+  }
+  const meta = st.state === 'logged' ? `auto · ${st.time}`
+    : st.state === 'skipped' ? 'skipped today'
+      : st.at ? `auto at ${st.at}` : 'auto';
+  row.createSpan({ cls: 'vital-log-schedule-meta', text: meta });
+
+  const controls = row.createDiv('vital-log-embed-tally-controls');
+  const save = () => plugin.saveSettings();
+  if (st.state === 'skipped') {
+    const undo = controls.createEl('button', { text: 'Undo', cls: 'vital-log-btn mod-compact', attr: { 'aria-label': 'Log it automatically again today' } });
+    undo.addEventListener('click', async () => {
+      await unskipAutoLogToday(plugin.settings, item, save);
+      await runAutoLog(plugin.app, plugin.settings, save);
+      await repaint();
+    });
+    return;
+  }
+  const skip = controls.createEl('button', {
+    text: 'Skip',
+    cls: 'vital-log-btn mod-compact',
+    attr: { 'aria-label': st.state === 'logged' ? 'Not taken today: remove the automatic log' : 'Don\'t log it today' },
+  });
+  skip.addEventListener('click', async () => {
+    await skipAutoLogToday(plugin.app, plugin.settings, item, save);
+    await repaint();
+  });
 }
 
 /**

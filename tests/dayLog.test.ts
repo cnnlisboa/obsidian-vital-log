@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collectDayLog, substanceTotals, timeline, isEmptyDay } from '../src/dayLog';
+import { collectDayLog, substanceTotals, timeline, groupTimeline, isEmptyDay } from '../src/dayLog';
 import { DEFAULT_SETTINGS } from '../src/types';
 import type { VitalLogSettings } from '../src/types';
 
@@ -82,5 +82,41 @@ describe('timeline', () => {
       '08:31 Morning Pack',
       '12:00 Sick',
     ]);
+  });
+});
+
+describe('groupTimeline', () => {
+  it('folds what was logged at the same minute into one row per family', () => {
+    const log = collectDayLog({
+      substances: [
+        { name: 'Vitamin D', time: '08:30', amount: 2000, unit: 'IU' },
+        { name: 'Magnesium', time: '08:30', amount: 200, unit: 'mg' },
+        { name: 'Vyvanse', time: '09:00', amount: 50 },
+      ],
+      packs: [{ time: '08:30', name: 'Morning Pack' }],
+      moodLog: [{ time: '08:30', mood: 4 }],
+      events: [{ time: '12:00', name: 'Sick', severity: 2 }],
+    }, settings);
+
+    const rows = groupTimeline(timeline(log));
+    expect(rows.map((r) => [r.time, r.kind, r.text, r.note ?? ''])).toEqual([
+      ['08:30', 'pack', 'Morning Pack', 'Vitamin D 2000IU · Magnesium 200mg'],
+      ['08:30', 'tracker', 'Mood: 4', ''],
+      ['09:00', 'substance', 'Vyvanse 50mg', ''],
+      ['12:00', 'event', 'Sick', ''],
+    ]);
+    expect(rows[0].items).toHaveLength(3);
+  });
+
+  it('joins loose substances and trackers taken together', () => {
+    const log = collectDayLog({
+      substances: [
+        { name: 'Caffeine', time: '07:00', amount: 100 },
+        { name: 'L-Theanine', time: '07:00', amount: 200 },
+      ],
+      moodLog: [{ time: '21:00', mood: 3 }],
+    }, settings);
+    const rows = groupTimeline(timeline(log));
+    expect(rows.map((r) => r.text)).toEqual(['Caffeine 100 · L-Theanine 200', 'Mood: 3']);
   });
 });

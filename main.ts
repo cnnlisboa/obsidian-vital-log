@@ -35,6 +35,9 @@ import { createVitalLogApi } from './src/api';
 import { initDayBoundary } from './src/dayBoundary';
 import { applyStockUse, lowStockMessage, setStockHandler } from './src/stock';
 import type { VitalLogApi } from './src/api';
+import { setTrackerLogHandler } from './src/trackerManager';
+import { pushReading } from './src/mtLink';
+import { runAutoLog } from './src/autoLog';
 
 export default class VitalLogPlugin extends Plugin {
   settings: VitalLogSettings = DEFAULT_SETTINGS;
@@ -112,9 +115,12 @@ export default class VitalLogPlugin extends Plugin {
       const changes = applyStockUse(this.settings, uses);
       if (changes.length === 0) return;
       await this.saveSettings();
-      const warning = lowStockMessage(changes);
+      const warning = uses.some((u) => u.units > 0) ? lowStockMessage(changes) : null;
       if (warning) new Notice(warning, 8000);
     });
+
+    // ── Linked trackers log their minutes in Management Tracker ──
+    setTrackerLogHandler((tracker, file, reading) => pushReading(this.app, this.settings, tracker, file, reading));
 
     // ── Settings tab ───────────────────────────────────────
     this.addSettingTab(new VitalLogSettingTab(this.app, this));
@@ -242,6 +248,9 @@ export default class VitalLogPlugin extends Plugin {
       // Catch renames made in a session that ended before the prompt could be
       // answered. Needs the metadata cache, hence layout-ready rather than here.
       void this.checkForKeyRenames();
+      // Planned supplements set to log themselves: now, then every minute.
+      void this.autoLog();
+      this.registerInterval(window.setInterval(() => void this.autoLog(), 60_000));
     });
     this.registerEvent(
       this.app.metadataCache.on('changed', (file: TFile) => {
@@ -256,6 +265,19 @@ export default class VitalLogPlugin extends Plugin {
   onunload(): void {
     // Obsidian automatically closes all registered modals and event listeners.
     setStockHandler(null);
+    setTrackerLogHandler(null);
+  }
+
+  private async autoLog(): Promise<void> {
+    if (!this.settings.plannedLogs.schedule.some((i) => i.autoLog)) return;
+    if (await runAutoLog(this.app, this.settings, () => this.saveSettings())) this.refreshDashboards();
+  }
+
+  /** Redraw open dashboard panes, e.g. after an auto-log wrote something. */
+  refreshDashboards(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_VITAL_DASHBOARD)) {
+      if (leaf.view instanceof DashboardView) void leaf.view.onOpen();
+    }
   }
 
   /** Reveal the dashboard pane, reusing an existing leaf or opening one on the right. */

@@ -94,7 +94,8 @@ export function applyStockUse(settings: VitalLogSettings, uses: StockUse[]): Sto
     const item: (Stocked & { displayName: string }) | undefined = use.kind === 'pack'
       ? settings.packs.find((p) => p.id === use.id)
       : settings.vitamins.find((v) => v.id === use.id);
-    if (!item || !hasStock(item) || use.units <= 0) continue;
+    // Negative units put stock back (a log taken back).
+    if (!item || !hasStock(item) || use.units === 0) continue;
     item.stock = Math.max(0, round((item.stock as number) - use.units));
     changes.push({ name: item.displayName, left: item.stock, low: item.stock <= lowStockThreshold(item) });
   }
@@ -137,4 +138,9 @@ export async function reportStockUse(uses: StockUse[]): Promise<void> {
   } catch (err) {
     console.error('Vital Log stock update:', err);
   }
+}
+
+/** Put back what a log taken back had used. */
+export async function returnStockUse(uses: StockUse[]): Promise<void> {
+  await reportStockUse(uses.map((u) => ({ ...u, units: -u.units })));
 }

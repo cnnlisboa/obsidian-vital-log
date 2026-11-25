@@ -36,6 +36,7 @@ import {
   isEmptyDay,
   substanceTotals,
   timeline,
+  groupTimeline,
   type DayLog,
   type TimelineItem,
 } from './dayLog';
@@ -594,10 +595,14 @@ function renderTimeline(panel: HTMLElement, log: DayLog): void {
     if (inBucket.length === 0) continue;
     panel.createDiv({ cls: 'vital-log-day-group-title', text: bucket.title });
     const list = panel.createDiv('vital-log-day-list');
-    for (const item of inBucket) {
-      const row = renderRow(list, item);
-      row.addClass(`vital-log-day-row--${item.kind}`);
-      if (item.severity !== undefined) severityBadge(row, item.severity);
+    for (const group of groupTimeline(inBucket)) {
+      const row = renderRow(list, group);
+      row.addClass(`vital-log-day-row--${group.kind}`);
+      if (group.items.length > 1) {
+        row.addClass('vital-log-day-row--grouped');
+        row.setAttribute('aria-label', group.items.map((i) => i.text).join('\n'));
+      }
+      if (group.severity !== undefined) severityBadge(row, group.severity);
     }
   }
 }

@@ -7,6 +7,8 @@ import { App, Notice, PluginSettingTab, Setting, setIcon, TFile } from 'obsidian
 import type VitalLogPlugin from '../main';
 import type { CustomModalConfig, CustomField, CustomFieldType, TallyCounterConfig, TrackerConfig, Metric, CustomModalItem, CustomButtonConfig, MirrorConditionalPin, StatType, ScheduleItem, ScheduleKind, Frequency, EventType } from './types';
 import { CUSTOM_FIELD_TYPES, STAT_TYPES, STAT_LABELS, defaultPrimaryStat, defaultDisplayStats, seriesMetrics, scalarMetrics, checkboxMetrics, SEVERITY_LABELS } from './types';
+import { getSessionApi, type MtStartChoice } from './managementTracker';
+import { canAutoLog } from './autoLog';
 import { setGoalFromToday, getGoalPlan, todayISO, resolveGoal, describeFrequency, parseTimes } from './planManager';
 import { ManageModal } from './manageModal';
 import { KeyDiagnosticModal } from './keyDiagnosticModal';
@@ -851,7 +853,7 @@ export class VitalLogSettingTab extends PluginSettingTab {
     // ── Schedule ──
     el.createEl('h3', { text: 'Daily Schedule' });
     el.createEl('p', {
-      text: 'Items the dashboard lists under "To take / do today" based on their frequency. With reminder times, Telegram Capture\'s relay reminds you at those times (by Telegram or ntfy) unless the item is already logged.',
+      text: 'Items the dashboard lists under "To take / do today" based on their frequency. With reminder times, Telegram Capture\'s relay reminds you at those times (by Telegram or ntfy) unless the item is already logged. Turn the switch on for a vitamin, pack or stack to log it automatically each day it\'s due — at its first reminder time, or when Obsidian first runs that day — unless you skip it on the dashboard. Days Obsidian was closed are filled in, up to a week back, for items with a reminder time.',
       cls: 'vital-log-settings-helper',
     });
 
@@ -873,10 +875,24 @@ export class VitalLogSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+      if (canAutoLog(item)) {
+        setting.addToggle((tg) => {
+          tg.setValue(item.autoLog === true).setTooltip('Log automatically each day it\'s due, unless skipped');
+          tg.toggleEl.setAttribute('aria-label', `Log ${name ?? item.kind} automatically`);
+          tg.onChange(async (on) => {
+            if (on) item.autoLog = true;
+            else delete item.autoLog;
+            // Start fresh from today either way: no week of back-logs on turning it on.
+            if (this.plugin.settings.plannedLogs.autoLogged) delete this.plugin.settings.plannedLogs.autoLogged[item.id];
+            await this.plugin.saveSettings();
+          });
+        });
+      }
       setting.addExtraButton((btn) =>
         btn.setIcon('trash').setTooltip('Remove').onClick(() => {
           void this.guarded(async () => {
             this.plugin.settings.plannedLogs.schedule = schedule.filter((s) => s.id !== item.id);
+            if (this.plugin.settings.plannedLogs.autoLogged) delete this.plugin.settings.plannedLogs.autoLogged[item.id];
             await this.plugin.saveSettings();
             this.display();
           });
@@ -1419,6 +1435,38 @@ export class VitalLogSettingTab extends PluginSettingTab {
       statBoxes.set(s, cb);
     }
 
+    // Minutes trackers can also log a Management Tracker session per reading.
+    const mtRow = form.createDiv('vital-log-form-row');
+    mtRow.createEl('label', { text: 'Management Tracker' });
+    const mtSelect = mtRow.createEl('select');
+    mtSelect.createEl('option', { value: '', text: 'Not linked' });
+    const mtApi = getSessionApi(this.app);
+    const choices = mtApi?.timerReady?.() !== false ? mtApi?.startChoices?.() ?? [] : [];
+    const byKind = new Map<string, MtStartChoice[]>();
+    for (const c of choices) {
+      // Recent setups have ids that change; link to what they count toward instead.
+      if (c.kind === 'Recent') continue;
+      const list = byKind.get(c.kind) ?? [];
+      list.push(c);
+      byKind.set(c.kind, list);
+    }
+    for (const [kind, list] of byKind) {
+      const group = mtSelect.createEl('optgroup', { attr: { label: kind } });
+      for (const c of list) group.createEl('option', { value: c.id, text: c.detail ? `${c.label} — ${c.detail}` : c.label });
+    }
+    const currentLink = existing?.mtLink;
+    if (currentLink && !choices.some((c) => c.id === currentLink.choice)) {
+      mtSelect.createEl('option', { value: currentLink.choice, text: `${currentLink.label} (not found now)` });
+    }
+    mtSelect.value = currentLink?.choice ?? '';
+    mtRow.createDiv({
+      cls: 'vital-log-settings-helper',
+      text: mtApi
+        ? 'Each reading is also logged as a Time Tracker session counting toward this, ending at the reading\'s time. Deleting or editing the reading in History updates it.'
+        : 'Turn on Management Tracker (or update it) to link this tracker to an effort, habit or area.',
+    });
+    if (!mtApi && !currentLink) mtSelect.disabled = true;
+
     // Show only the rows relevant to the selected type.
     const syncTypeUI = () => {
       const t = typeSelect.value;
@@ -1435,6 +1483,7 @@ export class VitalLogSettingTab extends PluginSettingTab {
       appendNoteRow.style.display = isTally ? '' : 'none';
       primaryRow.style.display = (isTally || isCheckbox) ? 'none' : '';
       statsRow.style.display = (isTally || isCheckbox) ? 'none' : '';
+      mtRow.style.display = t === 'minutes' ? '' : 'none';
     };
     syncTypeUI();
     typeSelect.addEventListener('change', syncTypeUI);
@@ -1499,6 +1548,7 @@ export class VitalLogSettingTab extends PluginSettingTab {
         m.appendToNoteName = appendNoteInput.value.trim() || undefined;
         m.primaryStat = undefined;
         m.displayStats = undefined;
+        delete m.mtLink;
       } else if (isCheckbox) {
         m.valueName = '';
         m.min = 0;
@@ -1516,6 +1566,13 @@ export class VitalLogSettingTab extends PluginSettingTab {
         m.max = parseInt(maxInput.value) || 5;
         m.primaryStat = primarySelect.value as StatType;
         m.displayStats = STAT_TYPES.filter((s) => statBoxes.get(s)?.checked);
+        const linkTo = type === 'minutes' ? mtSelect.value : '';
+        if (linkTo) {
+          const picked = choices.find((c) => c.id === linkTo);
+          m.mtLink = { choice: linkTo, label: picked?.label ?? currentLink?.label ?? linkTo };
+        } else {
+          delete m.mtLink;
+        }
         m.target = 0;
         m.step = 1;
         m.description = undefined;
